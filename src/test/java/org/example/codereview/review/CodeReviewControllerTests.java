@@ -122,7 +122,7 @@ class CodeReviewControllerTests {
 	void reviewsUploadedFile() throws Exception {
 		given(codeReviewAgent.reviewFile(any())).willReturn(RESULT);
 		MockMultipartFile file = new MockMultipartFile("file", "Foo.java", MediaType.TEXT_PLAIN_VALUE,
-				"class Foo {}".getBytes());
+				"class Foo {}".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file).param("language", "java"))
 				.andExpect(status().isOk())
@@ -137,7 +137,7 @@ class CodeReviewControllerTests {
 	void uploadPassesContextToAgent() throws Exception {
 		given(codeReviewAgent.reviewFile(any())).willReturn(RESULT);
 		MockMultipartFile file = new MockMultipartFile("file", "Foo.java", MediaType.TEXT_PLAIN_VALUE,
-				"class Foo {}".getBytes());
+				"class Foo {}".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file)
 						.param("language", "java")
@@ -151,7 +151,7 @@ class CodeReviewControllerTests {
 	void uploadStripsDirectoryFromFileName() throws Exception {
 		given(codeReviewAgent.reviewFile(any())).willReturn(RESULT);
 		MockMultipartFile file = new MockMultipartFile("file", "src/main/java/Foo.java", MediaType.TEXT_PLAIN_VALUE,
-				"class Foo {}".getBytes());
+				"class Foo {}".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file))
 				.andExpect(status().isOk());
@@ -163,7 +163,7 @@ class CodeReviewControllerTests {
 	void uploadWithoutFileNameUsesUnknown() throws Exception {
 		given(codeReviewAgent.reviewFile(any())).willReturn(RESULT);
 		MockMultipartFile file = new MockMultipartFile("file", "", MediaType.TEXT_PLAIN_VALUE,
-				"class Foo {}".getBytes());
+				"class Foo {}".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file))
 				.andExpect(status().isOk());
@@ -197,7 +197,7 @@ class CodeReviewControllerTests {
 	@Test
 	void rejectsWhitespaceOnlyUploadedFile() throws Exception {
 		MockMultipartFile file = new MockMultipartFile("file", "Foo.java", MediaType.TEXT_PLAIN_VALUE,
-				" \n\t \n".getBytes());
+				" \n\t \n".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file))
 				.andExpect(status().isBadRequest());

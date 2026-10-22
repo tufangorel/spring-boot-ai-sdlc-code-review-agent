@@ -1,5 +1,6 @@
 package org.example.codereview.review;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -12,8 +13,10 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -40,10 +43,9 @@ class ErrorResponseIntegrationTests {
 
 	@Test
 	void modelFailureReturns500WithErrorBody() {
-		ResponseEntity<Map> response = restTemplate.postForEntity("/api/reviews/file",
-				json("""
-						{"fileName":"Foo.java","content":"class Foo {}"}
-						"""), Map.class);
+		ResponseEntity<Map<String, Object>> response = post("/api/reviews/file", json("""
+				{"fileName":"Foo.java","content":"class Foo {}"}
+				"""));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
 		assertThat(response.getBody())
@@ -56,9 +58,9 @@ class ErrorResponseIntegrationTests {
 
 	@Test
 	void validationFailureReturns400WithErrorBody() {
-		ResponseEntity<Map> response = restTemplate.postForEntity("/api/reviews", json("""
+		ResponseEntity<Map<String, Object>> response = post("/api/reviews", json("""
 				{"diff":""}
-				"""), Map.class);
+				"""));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(response.getBody())
@@ -70,8 +72,8 @@ class ErrorResponseIntegrationTests {
 
 	@Test
 	void emptyUploadReturns400WithErrorBody() {
-		ResponseEntity<Map> response = restTemplate.postForEntity("/api/reviews/file/upload",
-				upload("Foo.java", new byte[0]), Map.class);
+		ResponseEntity<Map<String, Object>> response = post("/api/reviews/file/upload",
+				upload("Foo.java", new byte[0]));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(response.getBody()).containsEntry("path", "/api/reviews/file/upload");
@@ -80,7 +82,7 @@ class ErrorResponseIntegrationTests {
 
 	@Test
 	void uploadLargerThanOneMegabyteReturns413() {
-		byte[] content = "a".repeat(1_100_000).getBytes();
+		byte[] content = "a".repeat(1_100_000).getBytes(StandardCharsets.UTF_8);
 
 		ResponseEntity<String> response = restTemplate.postForEntity("/api/reviews/file/upload",
 				upload("Big.java", content), String.class);
@@ -94,8 +96,8 @@ class ErrorResponseIntegrationTests {
 		HttpHeaders headers = new HttpHeaders();
 		headers.setContentType(MediaType.TEXT_PLAIN);
 
-		ResponseEntity<Map> response = restTemplate.postForEntity("/api/reviews/file",
-				new HttpEntity<>("class Foo {}", headers), Map.class);
+		ResponseEntity<Map<String, Object>> response = post("/api/reviews/file",
+				new HttpEntity<>("class Foo {}", headers));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
 		assertThat(response.getBody()).containsEntry("status", 415);
@@ -103,16 +105,23 @@ class ErrorResponseIntegrationTests {
 
 	@Test
 	void unknownPathReturns404() {
-		ResponseEntity<Map> response = restTemplate.postForEntity("/api/reviews/unknown", json("{}"), Map.class);
+		ResponseEntity<Map<String, Object>> response = post("/api/reviews/unknown", json("{}"));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 	}
 
 	@Test
 	void getOnReviewEndpointReturns405() {
-		ResponseEntity<Map> response = restTemplate.getForEntity("/api/reviews", Map.class);
+		ResponseEntity<Map<String, Object>> response = restTemplate.exchange("/api/reviews", HttpMethod.GET, null,
+				new ParameterizedTypeReference<Map<String, Object>>() {
+				});
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+	}
+
+	private ResponseEntity<Map<String, Object>> post(String path, HttpEntity<?> entity) {
+		return restTemplate.exchange(path, HttpMethod.POST, entity, new ParameterizedTypeReference<>() {
+		});
 	}
 
 	private static HttpEntity<String> json(String body) {
