@@ -10,12 +10,13 @@ An AI-powered code review service built with Spring Boot and Spring AI. Send it 
 - REST API with request validation, accepting JSON or multipart file uploads
 - Health and info endpoints via Spring Boot Actuator
 - Swagger UI for trying out the API in the browser
+- Works with OpenAI or Anthropic Claude models, selected by configuration
 
 ## Tech stack
 
 - Java 25
 - Spring Boot 4.1.1 (Web MVC, Validation, Actuator)
-- Spring AI 2.0.1 with the OpenAI model starter
+- Spring AI 2.0.1 with the OpenAI and Anthropic model starters
 - springdoc-openapi 3.1.1 (OpenAPI spec and Swagger UI)
 - Maven (wrapper included)
 
@@ -24,14 +25,25 @@ An AI-powered code review service built with Spring Boot and Spring AI. Send it 
 ### Prerequisites
 
 - JDK 25
-- An OpenAI API key
+- An API key for the provider you want to use: OpenAI or Anthropic
 
 ### Run
 
-Windows (PowerShell):
+The provider is chosen with the `AI_PROVIDER` environment variable (`openai` by default) and the model with `OPENAI_MODEL` or `ANTHROPIC_MODEL`. Only the selected provider's API key is needed.
+
+With OpenAI (default), Windows PowerShell:
 
 ```powershell
 $env:OPENAI_API_KEY="sk-..."
+.\mvnw.cmd spring-boot:run
+```
+
+With Anthropic Claude, Windows PowerShell:
+
+```powershell
+$env:AI_PROVIDER="anthropic"
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+$env:ANTHROPIC_MODEL="claude-sonnet-4-5"   # optional, defaults to claude-haiku-4-5
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -40,9 +52,18 @@ macOS / Linux:
 ```bash
 export OPENAI_API_KEY="sk-..."
 ./mvnw spring-boot:run
+
+# or with Claude
+AI_PROVIDER=anthropic ANTHROPIC_API_KEY="sk-ant-..." ./mvnw spring-boot:run
 ```
 
-The service starts on `http://localhost:8080`.
+The same settings can be passed as command-line arguments, for example `--AI_PROVIDER=anthropic --ANTHROPIC_MODEL=claude-sonnet-4-5`, or with a packaged jar:
+
+```bash
+java -jar target/spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=anthropic
+```
+
+The service starts on `http://localhost:8080`. A running instance uses one provider; restart it to switch.
 
 ### Swagger UI
 
@@ -59,7 +80,15 @@ Use **Try it out** on any endpoint to send a request. The `/api/reviews/file/upl
 ./mvnw verify
 ```
 
-The tests use a dummy API key, so no real key is needed to build.
+No real API key is needed to build. The tests never call a real model:
+
+| Test class                   | Type        | What it covers                                                              |
+|------------------------------|-------------|-----------------------------------------------------------------------------|
+| `CodeReviewAgentTests`       | Unit        | Prompt construction and mapping the model reply to `ReviewResult`, using a stub chat model |
+| `CodeReviewControllerTests`  | Web slice   | Request handling and validation for each endpoint, with the agent mocked    |
+| `CodeReviewIntegrationTests` | Integration | Full HTTP request through controller, agent and Spring AI with a stub chat model |
+| `ChatModelProviderTests`     | Integration | Provider selection: OpenAI by default, Anthropic via `AI_PROVIDER`, model overrides, no OpenAI key needed for Anthropic |
+| `OpenApiDocsTests`           | Integration | OpenAPI spec lists every endpoint and Swagger UI is served                  |
 
 ## API reference
 
@@ -75,7 +104,7 @@ The tests use a dummy API key, so no real key is needed to build.
 - **Authentication:** none. Put the service behind a gateway or add Spring Security before exposing it outside a trusted network.
 - **Behavior:** every call is synchronous and makes one request to the language model. Expect a response in a few seconds to tens of seconds, depending on input size.
 - **Determinism:** results come from an LLM (temperature `0.2`), so the same input can produce slightly different findings between calls.
-- **Data handling:** the submitted code is sent to the configured model provider (OpenAI by default). Do not submit code you are not allowed to share with that provider.
+- **Data handling:** the submitted code is sent to the configured model provider (OpenAI by default, or Anthropic). Do not submit code you are not allowed to share with that provider.
 
 ### How a review works
 
@@ -84,7 +113,7 @@ sequenceDiagram
     participant Client as Client (CI, IDE, curl, Swagger UI)
     participant API as CodeReviewController
     participant Agent as CodeReviewAgent
-    participant LLM as LLM (OpenAI)
+    participant LLM as LLM (OpenAI or Claude)
 
     Client->>API: POST diff or file
     API->>API: Validate request (400 / 413 / 415 on failure)
@@ -321,15 +350,21 @@ jq -e '.verdict != "REQUEST_CHANGES"' review.json > /dev/null
 
 ## Configuration
 
-Settings live in `src/main/resources/application.properties`:
+Settings live in `src/main/resources/application.properties`. Each one reads an environment variable, so you normally only set the variables.
 
-| Property                                   | Default             |
-|--------------------------------------------|---------------------|
-| `spring.ai.openai.api-key`                 | `${OPENAI_API_KEY}` |
-| `spring.ai.openai.chat.options.model`      | `gpt-4o-mini`       |
-| `spring.ai.openai.chat.options.temperature`| `0.2`               |
+| Environment variable | Property                                  | Default            | Purpose                          |
+|----------------------|-------------------------------------------|--------------------|----------------------------------|
+| `AI_PROVIDER`        | `spring.ai.model.chat`                    | `openai`           | `openai` or `anthropic`          |
+| `OPENAI_API_KEY`     | `spring.ai.openai.api-key`                | —                  | Required when using OpenAI       |
+| `OPENAI_MODEL`       | `spring.ai.openai.chat.options.model`     | `gpt-4o-mini`      | Any OpenAI chat model            |
+| `ANTHROPIC_API_KEY`  | `spring.ai.anthropic.api-key`             | —                  | Required when using Anthropic    |
+| `ANTHROPIC_MODEL`    | `spring.ai.anthropic.chat.options.model`  | `claude-haiku-4-5` | Any Claude model ID              |
 
-To use a different provider (Anthropic, Ollama, etc.), swap the Spring AI starter dependency in `pom.xml` and update the `spring.ai.*` properties.
+Other defaults: temperature `0.2` for both providers, and `max-tokens` `4096` for Anthropic (`spring.ai.anthropic.chat.options.max-tokens`). Raise `max-tokens` if large reviews get cut off.
+
+`spring.ai.model.chat` tells Spring AI which provider's chat model to create, so only one is active at a time. The non-chat OpenAI models (embedding, image, audio, moderation) are turned off because the agent doesn't use them.
+
+`CodeReviewAgent` depends only on Spring AI's `ChatClient`, so the review code is the same for every provider. To add another provider (Ollama, Azure OpenAI, Gemini, etc.), add its Spring AI starter to `pom.xml`, configure its `spring.ai.*` properties, and set `AI_PROVIDER` to its name.
 
 ## Project structure
 
