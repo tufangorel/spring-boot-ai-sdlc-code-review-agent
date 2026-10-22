@@ -2,6 +2,8 @@
 
 An AI-powered code review service built with Spring Boot and Spring AI. Send it a code diff or a source file and it returns a structured review: a summary, an overall verdict, and a list of actionable findings.
 
+The API works with both **OpenAI** (GPT) and **Anthropic** (Claude) models. You choose the provider and model through configuration, with no code changes: set `AI_PROVIDER` to `openai` or `anthropic`, and optionally `OPENAI_MODEL` or `ANTHROPIC_MODEL`, as environment variables or command-line arguments. The endpoints, request formats and JSON responses are identical for every provider, so clients don't need to know which model is behind the service. See [Run](#run) for examples and [Configuration](#configuration) for all settings.
+
 ## Features
 
 - Reviews diffs or whole files for bugs, security issues, performance problems, maintainability concerns and missing tests
@@ -10,7 +12,7 @@ An AI-powered code review service built with Spring Boot and Spring AI. Send it 
 - REST API with request validation, accepting JSON or multipart file uploads
 - Health and info endpoints via Spring Boot Actuator
 - Swagger UI for trying out the API in the browser
-- Works with OpenAI or Anthropic Claude models, selected by configuration
+- Works with OpenAI or Anthropic Claude models; provider and model are chosen by configuration (defaults: OpenAI `gpt-4o-mini`, Claude `claude-haiku-4-5`)
 
 ## Tech stack
 
@@ -29,16 +31,41 @@ An AI-powered code review service built with Spring Boot and Spring AI. Send it 
 
 ### Run
 
-The provider is chosen with the `AI_PROVIDER` environment variable (`openai` by default) and the model with `OPENAI_MODEL` or `ANTHROPIC_MODEL`. Only the selected provider's API key is needed.
+Three settings control which model reviews the code:
 
-With OpenAI (default), Windows PowerShell:
+| Setting             | Values                             | Default            |
+|---------------------|------------------------------------|--------------------|
+| `AI_PROVIDER`       | `openai` or `anthropic`            | `openai`           |
+| `OPENAI_MODEL`      | Any OpenAI chat model              | `gpt-4o-mini`      |
+| `ANTHROPIC_MODEL`   | Any Claude model ID                | `claude-haiku-4-5` |
+
+Each setting can be given as an environment variable or as a command-line argument (`--AI_PROVIDER=anthropic`). Command-line arguments take precedence over environment variables.
+
+Only the selected provider's API key is needed: `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Always pass the key as an environment variable. A key given as a command-line argument is visible in the process list and shell history.
+
+A running instance uses one provider. Restart it to switch, or run two instances on different ports (see below).
+
+#### Option A: Maven wrapper (development)
+
+Runs straight from source; no build step needed.
+
+OpenAI, Windows PowerShell:
 
 ```powershell
 $env:OPENAI_API_KEY="sk-..."
+$env:OPENAI_MODEL="gpt-4o"            # optional, defaults to gpt-4o-mini
 .\mvnw.cmd spring-boot:run
 ```
 
-With Anthropic Claude, Windows PowerShell:
+OpenAI, macOS / Linux:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4o"          # optional, defaults to gpt-4o-mini
+./mvnw spring-boot:run
+```
+
+Anthropic Claude, Windows PowerShell:
 
 ```powershell
 $env:AI_PROVIDER="anthropic"
@@ -47,23 +74,134 @@ $env:ANTHROPIC_MODEL="claude-sonnet-4-5"   # optional, defaults to claude-haiku-
 .\mvnw.cmd spring-boot:run
 ```
 
-macOS / Linux:
+Anthropic Claude, macOS / Linux:
+
+```bash
+export AI_PROVIDER="anthropic"
+export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_MODEL="claude-sonnet-4-5" # optional, defaults to claude-haiku-4-5
+./mvnw spring-boot:run
+```
+
+PowerShell environment variables last for the current session. If you switch providers in the same window, set `AI_PROVIDER` again or clear it with `Remove-Item Env:AI_PROVIDER`.
+
+#### Option B: Executable jar (deployment)
+
+Build the jar once:
+
+```bash
+./mvnw clean package          # Windows: .\mvnw.cmd clean package
+```
+
+This produces `target/spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar`. Add `-DskipTests` to skip the tests.
+
+OpenAI, Windows PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY="sk-..."
+java -jar target\spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --OPENAI_MODEL=gpt-4o
+```
+
+OpenAI, macOS / Linux:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-./mvnw spring-boot:run
-
-# or with Claude
-AI_PROVIDER=anthropic ANTHROPIC_API_KEY="sk-ant-..." ./mvnw spring-boot:run
+java -jar target/spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --OPENAI_MODEL=gpt-4o
 ```
 
-The same settings can be passed as command-line arguments, for example `--AI_PROVIDER=anthropic --ANTHROPIC_MODEL=claude-sonnet-4-5`, or with a packaged jar:
+`--AI_PROVIDER=openai` is optional because OpenAI is the default. Add it to make the choice explicit, or to override an `AI_PROVIDER=anthropic` variable left over in the environment. Omit `--OPENAI_MODEL` to use `gpt-4o-mini`.
+
+Anthropic Claude, Windows PowerShell:
+
+```powershell
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+java -jar target\spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=anthropic --ANTHROPIC_MODEL=claude-sonnet-4-5
+```
+
+Anthropic Claude, macOS / Linux:
 
 ```bash
-java -jar target/spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."
+java -jar target/spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=anthropic --ANTHROPIC_MODEL=claude-sonnet-4-5
 ```
 
-The service starts on `http://localhost:8080`. A running instance uses one provider; restart it to switch.
+Omit `--ANTHROPIC_MODEL` to use `claude-haiku-4-5`.
+
+#### Option C: Both providers side by side
+
+To compare reviews from both providers on the same code, run two instances on different ports:
+
+```powershell
+# Window 1: OpenAI on port 8080
+$env:OPENAI_API_KEY="sk-..."
+java -jar target\spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=openai
+
+# Window 2: Claude on port 8081
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+java -jar target\spring-boot-ai-sdlc-code-review-agent-0.0.1-SNAPSHOT.jar --AI_PROVIDER=anthropic --server.port=8081
+```
+
+Then send the same request to `http://localhost:8080` and `http://localhost:8081`.
+
+#### Check that it works
+
+The service is ready when the log shows `Started SpringBootAiSdlcCodeReviewAgentApplication`. It listens on `http://localhost:8080` unless you set `--server.port`. Send a sample review:
+
+```powershell
+$body = @{
+    fileName = "UserService.java"
+    language = "java"
+    content  = @"
+public class UserService {
+    public User find(Connection conn, String name) throws SQLException {
+        Statement st = conn.createStatement();
+        ResultSet rs = st.executeQuery("SELECT * FROM users WHERE name = '" + name + "'");
+        return rs.next() ? new User(rs.getString("name")) : null;
+    }
+}
+"@
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/reviews/file `
+    -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 5
+```
+
+Or upload a file from disk:
+
+```bash
+curl -X POST http://localhost:8080/api/reviews/file/upload -F "file=@UserService.java" -F "language=java"
+```
+
+On Windows, use `curl.exe` rather than `curl`, which is an alias for `Invoke-WebRequest` in Windows PowerShell.
+
+The response looks like this (wording varies between models and runs):
+
+```json
+{
+  "summary": "The query is built by string concatenation, which allows SQL injection, and JDBC resources are never closed.",
+  "verdict": "REQUEST_CHANGES",
+  "findings": [
+    {
+      "file": "UserService.java",
+      "line": 4,
+      "severity": "CRITICAL",
+      "category": "SECURITY",
+      "message": "User input is concatenated into the SQL query, enabling SQL injection.",
+      "suggestion": "Use a PreparedStatement with a ? placeholder and setString."
+    }
+  ]
+}
+```
+
+#### Troubleshooting
+
+| Symptom                                              | Cause and fix                                                                 |
+|------------------------------------------------------|-------------------------------------------------------------------------------|
+| `500` response, log shows `invalid x-api-key` or `authentication_error` | Anthropic key is missing or wrong. Check `ANTHROPIC_API_KEY`        |
+| `500` response, log shows `401` or `Incorrect API key` from OpenAI       | OpenAI key is missing or wrong. Check `OPENAI_API_KEY`             |
+| `500` response, log mentions an unknown or invalid model                 | The `OPENAI_MODEL` or `ANTHROPIC_MODEL` value is not a valid model ID |
+| The wrong provider answers                           | An old `AI_PROVIDER` value is still set in the shell. Pass `--AI_PROVIDER=...` explicitly |
+| `Port 8080 was already in use`                       | Another instance is running. Stop it or add `--server.port=8081`              |
 
 ### Swagger UI
 
@@ -80,15 +218,20 @@ Use **Try it out** on any endpoint to send a request. The `/api/reviews/file/upl
 ./mvnw verify
 ```
 
-No real API key is needed to build. The tests never call a real model:
+No real API key is needed to build. The tests never call a real model; `StubChatModel` stands in for it and can return a fixed reply or throw an error.
 
-| Test class                   | Type        | What it covers                                                              |
-|------------------------------|-------------|-----------------------------------------------------------------------------|
-| `CodeReviewAgentTests`       | Unit        | Prompt construction and mapping the model reply to `ReviewResult`, using a stub chat model |
-| `CodeReviewControllerTests`  | Web slice   | Request handling and validation for each endpoint, with the agent mocked    |
-| `CodeReviewIntegrationTests` | Integration | Full HTTP request through controller, agent and Spring AI with a stub chat model |
-| `ChatModelProviderTests`     | Integration | Provider selection: OpenAI by default, Anthropic via `AI_PROVIDER`, model overrides, no OpenAI key needed for Anthropic |
-| `OpenApiDocsTests`           | Integration | OpenAPI spec lists every endpoint and Swagger UI is served                  |
+| Test class                      | Type        | What it covers                                                              |
+|---------------------------------|-------------|-----------------------------------------------------------------------------|
+| `CodeReviewAgentTests`          | Unit        | Prompt construction, JSON format instructions, mapping model replies (including no findings, null line numbers and Markdown-fenced JSON), and failures on invalid replies or model errors |
+| `CodeReviewControllerTests`     | Web slice   | Every endpoint with the agent mocked: field mapping, file name handling, UTF-8 content, and 400 / 415 responses |
+| `CodeReviewIntegrationTests`    | Integration | Full HTTP request through controller, agent and Spring AI with a stub chat model |
+| `ErrorResponseIntegrationTests` | Integration | Real embedded server: error body format and 400, 404, 405, 413, 415 and 500 responses |
+| `ChatModelProviderTests`        | Integration | Provider selection: OpenAI by default, Anthropic via `AI_PROVIDER`, model overrides, no OpenAI key needed for Anthropic |
+| `OpenApiDocsTests`              | Integration | OpenAPI spec: endpoints, summaries, required fields, enum values, file upload schema, and Swagger UI |
+| `ActuatorEndpointsTests`        | Integration | Health and info are exposed; sensitive endpoints such as `env` and `beans` are not |
+| `ApplicationMainTests`          | Smoke       | The application starts through its `main` method with either provider       |
+
+`./mvnw verify` also writes a JaCoCo coverage report to `target/site/jacoco/index.html`.
 
 ## API reference
 
