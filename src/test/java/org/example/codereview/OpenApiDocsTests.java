@@ -33,7 +33,7 @@ class OpenApiDocsTests {
 		mockMvc.perform(get("/v3/api-docs"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.info.title").value("Spring Boot AI Code Review Agent"))
-				.andExpect(jsonPath("$.info.version").value("0.0.1"))
+				.andExpect(jsonPath("$.info.version").value("0.0.1-SNAPSHOT"))
 				.andExpect(jsonPath("$.info.description").isNotEmpty());
 	}
 

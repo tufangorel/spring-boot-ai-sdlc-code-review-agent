@@ -2,6 +2,8 @@ package org.example.codereview.review;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,9 +27,11 @@ class CodeReviewAgentTests {
 			}
 			""";
 
+	private static final int MAX_INPUT = 1_048_576;
+
 	private final StubChatModel chatModel = new StubChatModel(REPLY);
 
-	private final CodeReviewAgent agent = new CodeReviewAgent(ChatClient.builder(chatModel));
+	private final CodeReviewAgent agent = new CodeReviewAgent(ChatClient.builder(chatModel), MAX_INPUT);
 
 	@Test
 	void reviewMapsModelReplyToReviewResult() {
@@ -49,6 +53,8 @@ class CodeReviewAgentTests {
 
 		assertThat(chatModel.lastPrompt().getSystemMessage().getText())
 				.contains("senior software engineer")
+				.contains("INFO, MINOR, MAJOR, or CRITICAL")
+				.contains("BUG, SECURITY, PERFORMANCE, MAINTAINABILITY, STYLE, or TESTING")
 				.contains("REQUEST_CHANGES if any finding is MAJOR or CRITICAL");
 		assertThat(chatModel.lastPrompt().getUserMessage().getText())
 				.contains("Language: java")
@@ -63,6 +69,15 @@ class CodeReviewAgentTests {
 		assertThat(chatModel.lastPrompt().getUserMessage().getText())
 				.contains("Language: unknown")
 				.contains("Context: unknown");
+	}
+
+	@Test
+	void reviewTrimsLanguageAndContext() {
+		agent.review(new ReviewRequest("  java  ", "  PR 42  ", "+ x"));
+
+		assertThat(chatModel.lastPrompt().getUserMessage().getText())
+				.contains("Language: java")
+				.contains("Context: PR 42");
 	}
 
 	@Test
@@ -185,16 +200,67 @@ class CodeReviewAgentTests {
 	}
 
 	@Test
+	void recalculatesVerdictFromFindings() {
+		CodeReviewAgent approvingAgent = agentReplying("""
+				{
+				  "summary": "SQL injection risk",
+				  "verdict": "APPROVE",
+				  "findings": [
+				    {"file": "UserService.java", "line": 12, "severity": "CRITICAL", "category": "SECURITY",
+				     "message": "Query built by string concatenation", "suggestion": "Use a PreparedStatement"}
+				  ]
+				}
+				""");
+
+		ReviewResult result = approvingAgent.review(new ReviewRequest(null, null, "+ x"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.REQUEST_CHANGES);
+		assertThat(result.summary()).isEqualTo("SQL injection risk");
+		assertThatThrownBy(() -> result.findings().add(null)).isInstanceOf(UnsupportedOperationException.class);
+	}
+
+	@Test
+	void dropsIncompleteFindingsAndFillsABlankSummary() {
+		CodeReviewAgent incomplete = agentReplying("""
+				{
+				  "summary": " ",
+				  "verdict": "REQUEST_CHANGES",
+				  "findings": [
+				    {"file": "A.java", "line": 1, "severity": "CRITICAL", "category": "SECURITY",
+				     "message": "Missing suggestion", "suggestion": " "}
+				  ]
+				}
+				""");
+
+		ReviewResult result = incomplete.review(new ReviewRequest(null, null, "+ x"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.APPROVE);
+		assertThat(result.summary()).isEqualTo("No blocking findings.");
+		assertThat(result.findings()).isEmpty();
+	}
+
+	@Test
+	void rejectsInputLargerThanTheLimitWithoutCallingTheModel() {
+		CodeReviewAgent limited = new CodeReviewAgent(ChatClient.builder(chatModel), 10);
+
+		assertThatThrownBy(() -> limited.review(new ReviewRequest(null, null, "12345678901")))
+				.isInstanceOf(ResponseStatusException.class)
+				.extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+				.isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+		assertThat(chatModel.prompts()).isEmpty();
+	}
+
+	@Test
 	void propagatesModelFailure() {
 		IllegalStateException failure = new IllegalStateException("provider unavailable");
-		CodeReviewAgent failingAgent = new CodeReviewAgent(ChatClient.builder(StubChatModel.failingWith(failure)));
+		CodeReviewAgent failingAgent = new CodeReviewAgent(ChatClient.builder(StubChatModel.failingWith(failure)), MAX_INPUT);
 
 		assertThatThrownBy(() -> failingAgent.reviewFile(new FileReviewRequest("Foo.java", null, null, "class Foo { }")))
 				.isSameAs(failure);
 	}
 
 	private static CodeReviewAgent agentReplying(String reply) {
-		return new CodeReviewAgent(ChatClient.builder(new StubChatModel(reply)));
+		return new CodeReviewAgent(ChatClient.builder(new StubChatModel(reply)), MAX_INPUT);
 	}
 
 }

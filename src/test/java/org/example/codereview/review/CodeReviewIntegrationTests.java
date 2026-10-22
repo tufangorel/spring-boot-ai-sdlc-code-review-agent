@@ -1,5 +1,7 @@
 package org.example.codereview.review;
 
+import java.nio.charset.StandardCharsets;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;
@@ -85,7 +87,7 @@ class CodeReviewIntegrationTests {
 	@Test
 	void reviewsUploadedFileEndToEnd() throws Exception {
 		MockMultipartFile file = new MockMultipartFile("file", "src/Foo.java", MediaType.TEXT_PLAIN_VALUE,
-				"class Foo { }".getBytes());
+				"class Foo { }".getBytes(StandardCharsets.UTF_8));
 
 		mockMvc.perform(multipart("/api/reviews/file/upload").file(file).param("context", "New class"))
 				.andExpect(status().isOk())
