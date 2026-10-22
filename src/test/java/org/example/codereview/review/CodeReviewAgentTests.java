@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CodeReviewAgentTests {
 
@@ -83,6 +84,117 @@ class CodeReviewAgentTests {
 		agent.reviewFile(new FileReviewRequest("Foo.java", "java", null, content));
 
 		assertThat(chatModel.lastPrompt().getUserMessage().getText()).contains(content);
+	}
+
+	@Test
+	void reviewFileUsesGivenLanguageAndContext() {
+		agent.reviewFile(new FileReviewRequest("app.py", "python", "Flask route", "print('hi')"));
+
+		assertThat(chatModel.lastPrompt().getUserMessage().getText())
+				.contains("Language: python")
+				.contains("Context: Flask route");
+	}
+
+	@Test
+	void reviewFileMapsModelReplyToReviewResult() {
+		ReviewResult result = agent.reviewFile(new FileReviewRequest("Foo.java", null, null, "class Foo { }"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.REQUEST_CHANGES);
+		assertThat(result.findings()).hasSize(1);
+	}
+
+	@Test
+	void promptAsksForJsonMatchingReviewResult() {
+		agent.review(new ReviewRequest("java", null, "+ x"));
+
+		String userText = chatModel.lastPrompt().getUserMessage().getText();
+		assertThat(userText).contains("\"verdict\"").contains("\"findings\"").contains("\"severity\"");
+	}
+
+	@Test
+	void callsModelOncePerReview() {
+		agent.review(new ReviewRequest(null, null, "+ x"));
+		agent.reviewFile(new FileReviewRequest("Foo.java", null, null, "class Foo { }"));
+
+		assertThat(chatModel.prompts()).hasSize(2);
+	}
+
+	@Test
+	void mapsApproveWithNoFindings() {
+		CodeReviewAgent approvingAgent = agentReplying("""
+				{"summary": "Looks good", "verdict": "APPROVE", "findings": []}
+				""");
+
+		ReviewResult result = approvingAgent.review(new ReviewRequest(null, null, "+ x"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.APPROVE);
+		assertThat(result.findings()).isEmpty();
+	}
+
+	@Test
+	void mapsFindingWithoutLineNumber() {
+		CodeReviewAgent commentingAgent = agentReplying("""
+				{
+				  "summary": "Minor naming issue",
+				  "verdict": "COMMENT",
+				  "findings": [
+				    {"file": "Foo.java", "line": null, "severity": "MINOR", "category": "STYLE",
+				     "message": "Unclear name", "suggestion": "Rename it"}
+				  ]
+				}
+				""");
+
+		ReviewResult result = commentingAgent.review(new ReviewRequest(null, null, "+ x"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.COMMENT);
+		assertThat(result.findings()).singleElement().satisfies(finding -> {
+			assertThat(finding.line()).isNull();
+			assertThat(finding.category()).isEqualTo(ReviewResult.Category.STYLE);
+		});
+	}
+
+	@Test
+	void mapsReplyWrappedInMarkdownCodeFence() {
+		CodeReviewAgent fencedAgent = agentReplying("""
+				```json
+				{"summary": "Looks good", "verdict": "APPROVE", "findings": []}
+				```
+				""");
+
+		ReviewResult result = fencedAgent.review(new ReviewRequest(null, null, "+ x"));
+
+		assertThat(result.verdict()).isEqualTo(ReviewResult.Verdict.APPROVE);
+	}
+
+	@Test
+	void failsWhenModelReplyIsNotJson() {
+		CodeReviewAgent confusedAgent = agentReplying("Sorry, I cannot review this code.");
+
+		assertThatThrownBy(() -> confusedAgent.review(new ReviewRequest(null, null, "+ x")))
+				.isInstanceOf(RuntimeException.class);
+	}
+
+	@Test
+	void failsWhenModelReplyHasUnknownVerdict() {
+		CodeReviewAgent confusedAgent = agentReplying("""
+				{"summary": "?", "verdict": "MAYBE", "findings": []}
+				""");
+
+		assertThatThrownBy(() -> confusedAgent.review(new ReviewRequest(null, null, "+ x")))
+				.isInstanceOf(RuntimeException.class);
+	}
+
+	@Test
+	void propagatesModelFailure() {
+		IllegalStateException failure = new IllegalStateException("provider unavailable");
+		CodeReviewAgent failingAgent = new CodeReviewAgent(ChatClient.builder(StubChatModel.failingWith(failure)));
+
+		assertThatThrownBy(() -> failingAgent.reviewFile(new FileReviewRequest("Foo.java", null, null, "class Foo { }")))
+				.isSameAs(failure);
+	}
+
+	private static CodeReviewAgent agentReplying(String reply) {
+		return new CodeReviewAgent(ChatClient.builder(new StubChatModel(reply)));
 	}
 
 }

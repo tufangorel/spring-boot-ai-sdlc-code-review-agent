@@ -13,15 +13,29 @@ class StubChatModel implements ChatModel {
 
 	private final String reply;
 
+	private final RuntimeException failure;
+
 	private final List<Prompt> prompts = new ArrayList<>();
 
 	StubChatModel(String reply) {
+		this(reply, null);
+	}
+
+	private StubChatModel(String reply, RuntimeException failure) {
 		this.reply = reply;
+		this.failure = failure;
+	}
+
+	static StubChatModel failingWith(RuntimeException failure) {
+		return new StubChatModel(null, failure);
 	}
 
 	@Override
 	public ChatResponse call(Prompt prompt) {
 		prompts.add(prompt);
+		if (failure != null) {
+			throw failure;
+		}
 		return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
 	}
 
